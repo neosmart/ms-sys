@@ -21,23 +21,39 @@
 #include "nls.h"
 #include "file.h"
 
+#include <unistd.h>
+#ifdef __FreeBSD__
+#include <sys/sysctl.h>
+#endif
+
 int contains_data(FILE *fp, unsigned long ulPosition,
 		  const void *pData, unsigned int uiLen)
 {
+   /* cannot read/write directly from/to disk at random offsets */
+   /* must read/write from/to pagesize boundaries */
+   unsigned long pagesize = sysconf(_SC_PAGE_SIZE);
    unsigned char aucBuf[MAX_DATA_LEN];
 
-   if(uiLen > MAX_DATA_LEN)
+   /*Rounding functions for multiples that are powers of two:*/
+   /*Up:   return ((number + multiple - 1) & ~(multiple - 1));*/
+   /*Down: return (number & ~(multiple - 1));*/
+
+   unsigned long start_read = ulPosition & ~(pagesize - 1);
+   unsigned long to_read = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_read;
+
+   if(to_read > MAX_DATA_LEN)
    {
       fprintf(stderr, _("Error: contains_data called with uiLen > %d,\n"),
 	      MAX_DATA_LEN);
       fprintf(stderr, _("please increase MAX_DATA_LEN in file.h\n"));
       return 0;
    }
-   if(fseek(fp, ulPosition, SEEK_SET))
+   
+   if(fseek(fp, start_read, SEEK_SET))
       return 0;
-   if(!fread(aucBuf, uiLen, 1, fp))
+   if(!fread(aucBuf, to_read, 1, fp))
       return 0;
-   if(memcmp(pData, aucBuf, uiLen))
+   if(memcmp(pData, aucBuf + ulPosition - start_read, uiLen))
       return 0;
    return 1;
 } /* contains_data */
@@ -45,9 +61,25 @@ int contains_data(FILE *fp, unsigned long ulPosition,
 int write_data(FILE *fp, unsigned long ulPosition,
 	       const void *pData, unsigned int uiLen)
 {
-   if(fseek(fp, ulPosition, SEEK_SET))
+   /* cannot read/write directly from/to disk at random offsets */
+   /* must read/write from/to pagesize boundaries */
+   unsigned long pagesize = sysconf(_SC_PAGE_SIZE);
+   unsigned char aucBuf[MAX_DATA_LEN];
+
+   unsigned long start_read = ulPosition & ~(pagesize - 1);
+   unsigned long to_read = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_read;
+
+   if(fseek(fp, start_read, SEEK_SET))
       return 0;
-   if(!fwrite(pData, uiLen, 1, fp))
+   if(!fread(aucBuf, to_read, 1, fp))
+      return 0;
+
+    /* modify in the local buffer first */
+    memcpy(aucBuf + ulPosition - start_read, pData, uiLen);
+
+   if(fseek(fp, start_read, SEEK_SET))
+      return 0;
+   if(!fwrite(aucBuf, to_read, 1, fp))
       return 0;
    return 1;
 } /* write_data */
