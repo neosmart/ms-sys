@@ -29,17 +29,23 @@
 int contains_data(FILE *fp, unsigned long ulPosition,
 		  const void *pData, unsigned int uiLen)
 {
+   unsigned char aucBuf[MAX_DATA_LEN];
+
+   unsigned long start_read = ulPosition;
+   unsigned long to_read = uiLen;
+
+#ifdef __FreeBSD__
    /* cannot read/write directly from/to disk at random offsets */
    /* must read/write from/to pagesize boundaries */
-   unsigned long pagesize = sysconf(_SC_PAGE_SIZE);
-   unsigned char aucBuf[MAX_DATA_LEN];
 
    /*Rounding functions for multiples that are powers of two:*/
    /*Up:   return ((number + multiple - 1) & ~(multiple - 1));*/
    /*Down: return (number & ~(multiple - 1));*/
 
-   unsigned long start_read = ulPosition & ~(pagesize - 1);
-   unsigned long to_read = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_read;
+   unsigned long pagesize = sysconf(_SC_PAGE_SIZE);
+   start_read = ulPosition & ~(pagesize - 1); /* round down */
+   to_read = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_read; /* round up */
+#endif
 
    if(to_read > MAX_DATA_LEN)
    {
@@ -61,25 +67,31 @@ int contains_data(FILE *fp, unsigned long ulPosition,
 int write_data(FILE *fp, unsigned long ulPosition,
 	       const void *pData, unsigned int uiLen)
 {
+   unsigned long start_write = ulPosition;
+   unsigned long to_write = uiLen;
+
+#ifdef __FreeBSD__
    /* cannot read/write directly from/to disk at random offsets */
    /* must read/write from/to pagesize boundaries */
    unsigned long pagesize = sysconf(_SC_PAGE_SIZE);
    unsigned char aucBuf[MAX_DATA_LEN];
 
-   unsigned long start_read = ulPosition & ~(pagesize - 1);
-   unsigned long to_read = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_read;
+   start_write = ulPosition & ~(pagesize - 1); /* round down */
+   to_write = (((ulPosition + uiLen) + pagesize - 1) & ~(pagesize - 1)) - start_write; /* round up */
 
-   if(fseek(fp, start_read, SEEK_SET))
+   if(fseek(fp, start_write, SEEK_SET))
       return 0;
-   if(!fread(aucBuf, to_read, 1, fp))
+   if(!fread(aucBuf, to_write, 1, fp))
       return 0;
 
     /* modify in the local buffer first */
-    memcpy(aucBuf + ulPosition - start_read, pData, uiLen);
+    memcpy(aucBuf + ulPosition - start_write, pData, uiLen);
+    pData = aucBuf;
+#endif
 
-   if(fseek(fp, start_read, SEEK_SET))
+   if(fseek(fp, start_write, SEEK_SET))
       return 0;
-   if(!fwrite(aucBuf, to_read, 1, fp))
+   if(!fwrite(aucBuf, to_write, 1, fp))
       return 0;
    return 1;
 } /* write_data */
